@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Delta GBA">
+    <meta name="theme-color" content="#0a0b10">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/svg+xml" href="icon.svg">
+    <link rel="apple-touch-icon" href="icon.svg">
+    <title>Delta GBA — Trình Giả Lập Game Boy Advance (iOS & PC)</title>
+    <!-- Vá lỗi Sandbox cho Emscripten/mGBA & ép WebGL giữ bộ đệm khung hình để chụp ảnh Save State thực tế -->
+    <script>
+        (function () {
+            const origGetContext = HTMLCanvasElement.prototype.getContext;
+            HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+                if (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl') {
+                    attrs = Object.assign({}, attrs || {}, { preserveDrawingBuffer: true });
+                }
+                return origGetContext.call(this, type, attrs);
+            };
+
+            const safeBatteryMock = {
+                charging: true,
+                chargingTime: 0,
+                dischargingTime: Infinity,
+                level: 1.0,
+                onchargingchange: null,
+                onchargingtimechange: null,
+                ondischargingtimechange: null,
+                onlevelchange: null,
+                addEventListener: function () {},
+                removeEventListener: function () {},
+                dispatchEvent: function () { return true; }
+            };
+
+            const origGetBattery = (typeof navigator !== 'undefined' && typeof navigator.getBattery === 'function')
+                ? navigator.getBattery.bind(navigator)
+                : null;
+
+            const patchedGetBattery = function () {
+                if (!origGetBattery) return Promise.resolve(safeBatteryMock);
+                return origGetBattery().then(function (battery) {
+                    if (!battery || typeof battery.addEventListener !== 'function') return safeBatteryMock;
+                    return battery;
+                }).catch(function () {
+                    return safeBatteryMock;
+                });
+            };
+
+            try {
+                if (typeof navigator !== 'undefined') {
+                    Object.defineProperty(navigator, 'getBattery', {
+                        value: patchedGetBattery,
+                        configurable: true,
+                        writable: true
+                    });
+                }
+            } catch (e) {}
+
+            window.addEventListener('unhandledrejection', function (event) {
+                const msg = String((event.reason && (event.reason.message || event.reason)) || '');
+                if (msg.includes('battery') || msg.includes('addEventListener')) {
+                    event.preventDefault();
+                }
+            });
+        })();
+    </script>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <!-- Google Font: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+                        mono: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="text-white/90 font-sans antialiased selection:bg-white/40 selection:text-white min-h-screen flex flex-col md:flex-row">
+
+    <!-- ==================== VIEW 1: THƯ VIỆN BĂNG GAME (DASHBOARD) ==================== -->
+    <div id="view-dashboard" class="flex-1 flex flex-col min-h-screen w-full">
+        <main class="flex-1 flex flex-col min-w-0">
+            <!-- Thanh Topbar -->
+            <header class="w-full px-3 sm:px-6 py-2.5 border-b border-white/10 bg-white/[0.06] backdrop-blur-xl flex flex-wrap items-center justify-between gap-2.5 sticky top-0 z-10">
+                <div id="mobile-bar" class="w-full relative flex items-center justify-between">
+                    <div id="mb-left" class="flex items-center">
+                        <button onclick="openSettingsModal()" aria-label="Cài đặt" class="m-icon-btn inline-flex items-center justify-center"><i class="fa-solid fa-gear"></i></button>
+                        <button onclick="toggleMobileMenu('sort')" aria-label="Sắp xếp và quản lý kệ" class="m-icon-btn inline-flex items-center justify-center"><i class="fa-solid fa-bars-staggered"></i></button>
+                    </div>
+                    <span id="mb-title" class="absolute left-1/2 -translate-x-1/2 text-base font-extrabold text-white pointer-events-none">Thư viện</span>
+                    <div id="mb-right" class="flex items-center">
+                        <button onclick="switchToPlayerView()" id="mobile-resume-pill" aria-label="Quay lại game đang chơi" class="hidden m-icon-btn items-center justify-center" title="Quay lại game đang chơi"><i class="fa-solid fa-play"></i></button>
+                        <button onclick="triggerFileInput()" aria-label="Nhập ROM (.gba)" class="m-icon-btn inline-flex items-center justify-center" title="Thêm ROM (.gba)"><i class="fa-solid fa-plus"></i></button>
+                    </div>
+                    <div id="mobile-menu" class="hidden absolute left-0 top-full mt-2 w-64 z-30 rounded-2xl bg-black/85 backdrop-blur-xl border border-white/20 shadow-2xl p-1.5"></div>
+                </div>
+
+                <!-- Cụm Tìm kiếm -->
+                <div id="dash-search-cluster" class="flex items-center gap-2.5 w-full justify-end">
+                    <div class="relative flex-1">
+                        <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-white/[0.45] text-xs"></i>
+                        <input id="library-search-input"
+                               type="text"
+                               oninput="renderDashboardRomGrid()"
+                               placeholder="Tìm tên ROM hoặc mã ID..."
+                               class="w-full bg-black/[0.35] backdrop-blur-xl border border-white/10 rounded-2xl pl-9 pr-3 py-2.5 text-sm text-white placeholder-white/40 focus:outline-none focus:border-white/40 transition">
+                    </div>
+                </div>
+            </header>
+
+            <!-- Nội dung Kệ Băng & Khu vực Kéo Thả ROM -->
+            <div id="dash-content" class="flex-1 p-3.5 sm:p-6 space-y-4 overflow-y-auto"
+                 ondragover="handleDragOver(event)"
+                 ondragleave="handleDragLeave(event)"
+                 ondrop="handleFileDrop(event)">
+
+                <!-- Tiêu đề Kệ Băng & Nút Xóa hết game -->
+                <div id="dash-shelf-head" class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="flex items-center gap-2.5">
+                        <h3 class="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-white/90 flex items-center gap-2">
+                            <i class="fa-solid fa-layer-group text-white/[0.85]"></i> Kệ Băng Của Bạn
+                        </h3>
+                        <span id="grid-rom-counter" class="text-xs font-mono text-white/[0.45]">(0 băng)</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <label class="flex items-center gap-1.5 text-[11px] text-white/60">
+                            <i class="fa-solid fa-arrow-down-wide-short"></i>
+                            <select id="library-sort-select" onchange="setLibrarySort(this.value)" class="bg-black/40 border border-white/15 rounded-lg px-2 py-1 text-[11px] font-semibold text-white focus:outline-none focus:border-white/40">
+                                <option value="recent">Chơi gần đây</option>
+                                <option value="name">Tên A–Z</option>
+                                <option value="size">Dung lượng</option>
+                            </select>
+                        </label>
+                        <button onclick="confirmClearAllGames()" id="clear-library-btn" class="hidden px-2.5 py-1 rounded-lg bg-red-500/15 hover:bg-red-500/25 border border-red-400/25 text-xs font-bold text-red-300 transition">
+                            <i class="fa-solid fa-trash-can mr-1"></i> Xóa hết game
+                        </button>
+                    </div>
+                </div>
+
+                <!-- LƯỚI BĂNG GAME -->
+                <div id="dashboard-rom-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4"></div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ==================== VIEW 2: MÀN HÌNH CHƠI GAME TOÀN MÀN HÌNH ==================== -->
+    <div id="view-player" class="fixed inset-0 bg-[#040508] z-40 hidden flex-col justify-between overflow-hidden select-none">
+
+        <!-- Badge hiển thị trạng thái nhanh góc trên -->
+        <div class="fixed top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 pointer-events-none">
+            <span id="hud-ff-badge" onclick="cycleFastForward()" class="pointer-events-auto cursor-pointer text-[12px] font-extrabold px-3.5 py-1.5 rounded-full bg-black/65 text-white border border-white/25 backdrop-blur-md active:scale-95 transition">
+                <i class="fa-solid fa-forward-fast mr-1"></i>2x
+            </span>
+            <span id="hud-cheat-badge" class="hidden text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-black/65 text-white border border-white/25 backdrop-blur-md">
+                0 CHEAT
+            </span>
+            <span id="hold-indicator-badge" class="hidden text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-black/65 text-white border border-white/25 backdrop-blur-md">
+                HOLD
+            </span>
+        </div>
+
+        <!-- Thông báo nổi khi đang chọn nút Hold -->
+        <div id="hold-selection-banner" class="hidden absolute top-14 left-1/2 -translate-x-1/2 z-30 py-1.5 px-4 rounded-full bg-black/75 border border-white/25 text-white text-xs font-black shadow-xl backdrop-blur-md animate-bounce">
+            <i class="fa-solid fa-hand-pointer mr-1"></i> Chạm vào một nút GBA bất kỳ bên dưới để bật/tắt Giữ Tự Động (Hold)
+        </div>
+
+        <!-- Thanh công cụ Tùy chỉnh nút ảo (Tách riêng Dọc & Ngang) -->
+        <div id="touch-layout-editor-bar" class="hidden fixed top-3 left-1/2 -translate-x-1/2 z-50 w-[94vw] max-w-md bg-black/85 backdrop-blur-xl border border-white/25 rounded-2xl p-3.5 shadow-2xl space-y-2.5">
+            <div class="flex items-center justify-between gap-2">
+                <span class="text-xs font-extrabold text-white flex items-center gap-1.5">
+                    <i class="fa-solid fa-arrows-up-down-left-right text-white/80"></i> Tùy Chỉnh Nút Ảo
+                </span>
+                <div class="flex items-center gap-1.5">
+                    <span id="layout-orientation-badge" class="text-[10px] font-extrabold px-2 py-0.5 rounded-lg bg-white/15 border border-white/25 text-white">
+                        Màn hình: Ngang
+                    </span>
+                    <span id="layout-selected-name" class="text-[11px] font-mono px-2 py-0.5 rounded-lg bg-white/10 border border-white/15 text-white/90">
+                        Tất cả
+                    </span>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3 text-[11px]">
+                <label class="flex flex-col gap-1">
+                    <span class="text-white/70 flex justify-between">
+                        <span>Kích thước</span>
+                        <strong id="layout-scale-label" class="text-white">100%</strong>
+                    </span>
+                    <input id="layout-scale-slider" type="range" min="50" max="160" step="5" value="100" oninput="onTouchLayoutScaleInput(this.value)" class="w-full accent-white">
+                </label>
+                <label class="flex flex-col gap-1">
+                    <span class="text-white/70 flex justify-between">
+                        <span>Độ rõ (Opacity)</span>
+                        <strong id="layout-opacity-label" class="text-white">100%</strong>
+                    </span>
+                    <input id="layout-opacity-slider" type="range" min="15" max="100" step="5" value="100" oninput="onTouchLayoutOpacityInput(this.value)" class="w-full accent-white">
+                </label>
+            </div>
+            <div class="flex items-center justify-between gap-2 pt-1">
+                <span class="text-[10px] text-white/50">Bố cục Dọc &amp; Ngang được lưu riêng</span>
+                <div class="flex items-center gap-2">
+                    <button onclick="resetTouchLayoutToDefault()" class="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-bold text-white/90 transition">
+                        <i class="fa-solid fa-rotate-left mr-1"></i> Mặc định
+                    </button>
+                    <button onclick="exitTouchLayoutEditMode(true)" class="px-4 py-1.5 rounded-xl bg-white hover:bg-white/90 text-xs font-extrabold text-black shadow transition">
+                        <i class="fa-solid fa-check mr-1"></i> Lưu bố cục
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- SÂN KHẤU MÀN HÌNH GAME GBA -->
+        <div id="game-stage-area" class="absolute inset-0 flex justify-center overflow-hidden">
+            <!-- Khung căn chuẩn màn hình 3:2 chỉ hiện khi mở Chỉnh nút ảo từ Cài đặt/Thư viện (không làm lộ game đang chạy nền) -->
+            <div id="layout-preview-backdrop" class="hidden gba-theater-stage border border-dashed border-white/20 bg-white/[0.02] flex-col items-center justify-center text-center p-6 pointer-events-none">
+                <i class="fa-solid fa-tv text-2xl text-white/25 mb-2"></i>
+                <p class="text-xs font-bold text-white/40 uppercase tracking-widest">Khung Màn Hình GBA (Tỉ lệ 3:2)</p>
+                <p class="text-[11px] text-white/30 mt-1">Kéo thả các nút ảo xung quanh khung này</p>
+            </div>
+
+            <div id="gba-screen-wrapper" class="gba-theater-stage filter-pixelated">
+                <div id="wasm-mount-container" class="absolute inset-0 hidden items-center justify-center bg-black"></div>
+                <div id="lcd-grid" class="lcd-grid-overlay absolute inset-0"></div>
+
+                <!-- Lớp phủ TẠM DỪNG -->
+                <div id="pause-overlay" class="hidden absolute inset-0 bg-black/40 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center z-20">
+                    <div class="w-14 h-14 rounded-2xl bg-white/10 border border-white/30 flex items-center justify-center mb-3">
+                        <i class="fa-solid fa-pause text-white text-2xl"></i>
+                    </div>
+                    <p class="font-black text-base sm:text-lg text-white tracking-wide">TRÒ CHƠI ĐANG TẠM DỪNG</p>
+                    <p class="text-xs text-white/60 mt-1 mb-5">Bấm Tiếp tục hoặc mở menu ▲ để Lưu/Nạp trạng thái</p>
+                    <div class="flex flex-wrap justify-center gap-2.5">
+                        <button onclick="resumeGame()" class="px-5 py-2.5 rounded-2xl bg-white/20 hover:bg-white/30 border border-white/30 text-xs sm:text-sm font-extrabold text-white">
+                            <i class="fa-solid fa-play mr-1.5"></i> Tiếp Tục Chơi
+                        </button>
+                        <button onclick="openSaveStateModal()" class="px-4 py-2.5 rounded-2xl bg-white/[0.06] hover:bg-white/[0.15] border border-white/25 text-xs sm:text-sm font-bold text-white">
+                            <i class="fa-solid fa-floppy-disk mr-1"></i> Save / Load
+                        </button>
+                        <button onclick="switchToLibraryView()" class="px-4 py-2.5 rounded-2xl bg-white/[0.06] hover:bg-white/[0.15] border border-white/25 text-xs sm:text-sm font-bold text-white">
+                            <i class="fa-solid fa-folder-open mr-1"></i> Đổi Băng ROM
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- NÚT ẢO TRONG SUỐT PHỦ LÊN MÀN HÌNH GAME -->
+        <section id="eclipse-touch-overlay" class="absolute inset-0 z-30 pointer-events-none">
+            <button id="ctl-btn-L" data-ctl-id="L" data-ctl-label="Nút L" data-gba-btn="L" class="gba-touch-btn glass-btn ctl btn-L">L</button>
+            <button id="ctl-btn-R" data-ctl-id="R" data-ctl-label="Nút R" data-gba-btn="R" class="gba-touch-btn glass-btn ctl btn-R">R</button>
+
+            <div id="joy-zone" data-ctl-id="JOY" data-ctl-label="Joystick D-Pad" class="ctl">
+                <div class="joy-base"><div id="joy-knob" class="joy-knob"></div></div>
+            </div>
+
+            <button id="ctl-btn-B" data-ctl-id="B" data-ctl-label="Nút B" data-gba-btn="B" class="gba-touch-btn glass-btn ctl round-btn">B</button>
+            <button id="ctl-btn-A" data-ctl-id="A" data-ctl-label="Nút A" data-gba-btn="A" class="gba-touch-btn glass-btn ctl round-btn">A</button>
+
+            <div id="mid-zone" data-ctl-id="MID" data-ctl-label="Select / Menu / Start" class="ctl">
+                <button data-gba-btn="SELECT" class="gba-touch-btn glass-btn pill-btn">SELECT</button>
+                <button id="delta-menu-trigger-btn" onclick="if(!AppState.isEditingTouchLayout) openDeltaMenu()" class="glass-btn menu-tri" aria-label="Mở menu">&#9650;</button>
+                <button data-gba-btn="START" class="gba-touch-btn glass-btn pill-btn">START</button>
+            </div>
+        </section>
+
+        <!-- Nút ▲ mở menu khi đã ẩn nút ảo -->
+        <button id="menu-fallback" onclick="openDeltaMenu()" class="hidden glass-btn menu-tri" aria-label="Mở menu" style="position:absolute;z-index:31;left:50%;transform:translateX(-50%);bottom:max(14px,env(safe-area-inset-bottom))">&#9650;</button>
+    </div>
+
+   <!-- Input chọn file ẩn -->
+<input type="file" id="rom-file-input" class="hidden" onchange="handleFileSelect(event)">
+<input type="file" id="state-file-input" class="hidden" onchange="handleImportStateFile(event)">
+<input type="file" id="cover-image-input" accept="image/*" class="hidden" onchange="handleCustomCoverFileSelect(event)">
+
+    <!-- ==================== POPUP XÁC NHẬN KÍNH MỜ (THAY THẾ WINDOW.CONFIRM) ==================== -->
+    <div id="glass-confirm-modal" class="fixed inset-0 bg-black/60 backdrop-blur-md z-[70] hidden items-center justify-center p-4" onclick="if(event.target===this) resolveGlassConfirm(false)">
+        <div class="w-full max-w-sm bg-black/80 backdrop-blur-xl border border-white/25 rounded-3xl p-5 shadow-2xl space-y-4">
+            <div class="flex items-start gap-3">
+                <div id="glass-confirm-icon-wrap" class="w-10 h-10 rounded-2xl bg-red-500/15 border border-red-400/30 flex items-center justify-center shrink-0 text-red-300">
+                    <i id="glass-confirm-icon" class="fa-solid fa-triangle-exclamation text-base"></i>
+                </div>
+                <div class="min-w-0 flex-1">
+                    <h3 id="glass-confirm-title" class="text-sm sm:text-base font-extrabold text-white">Xác nhận</h3>
+                    <p id="glass-confirm-message" class="text-xs text-white/70 mt-1 leading-relaxed whitespace-pre-line">--</p>
+                </div>
+            </div>
+            <div class="flex items-center justify-end gap-2 pt-1">
+                <button id="glass-confirm-cancel-btn" onclick="resolveGlassConfirm(false)" class="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-bold text-white transition">
+                    Hủy
+                </button>
+                <button id="glass-confirm-ok-btn" onclick="resolveGlassConfirm(true)" class="px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-400/35 text-xs font-extrabold text-red-200 transition">
+                    Xác nhận
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== MENU HÀNH ĐỘNG BĂNG GAME (ẤN GIỮ / CHUỘT PHẢI) ==================== -->
+    <div id="game-action-sheet" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 hidden items-end sm:items-center justify-center p-0 sm:p-4" onclick="if(event.target===this) closeGameActionSheet()">
+        <div class="w-full max-w-sm max-h-[92dvh] overflow-y-auto bg-black/[0.75] backdrop-blur-xl border-t sm:border border-white/20 rounded-t-3xl sm:rounded-3xl p-4 shadow-2xl">
+            <div class="w-12 h-1.5 bg-white/20 rounded-full mx-auto mb-3 sm:hidden"></div>
+
+            <div class="flex items-center gap-3 pb-3 border-b border-white/10">
+                <img id="sheet-cover" src="" alt="" class="w-16 h-16 rounded-2xl object-cover bg-white/10 border border-white/15 shrink-0">
+                <div class="min-w-0 flex-1">
+                    <h3 id="sheet-title" class="text-sm font-extrabold text-white leading-tight line-clamp-2">--</h3>
+                    <p id="sheet-sub" class="text-[11px] text-white/60 mt-0.5 truncate">--</p>
+                    <p id="sheet-extra" class="text-[11px] text-white/45 truncate">--</p>
+                </div>
+                <button onclick="closeGameActionSheet()" class="w-8 h-8 rounded-full bg-white/[0.08] hover:bg-white/[0.18] flex items-center justify-center text-white/90 shrink-0">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="mt-3 space-y-1.5">
+                <button onclick="sheetPlay()" class="w-full py-3 rounded-2xl bg-white text-black text-sm font-extrabold flex items-center justify-center gap-2 hover:opacity-90 transition">
+                    <i class="fa-solid fa-play text-xs"></i> <span id="sheet-play-label">Chơi ngay</span>
+                </button>
+                <div class="grid grid-cols-2 gap-1.5">
+                    <button onclick="sheetChangeCover()" class="py-2.5 rounded-2xl bg-white/[0.07] hover:bg-white/[0.15] border border-white/10 text-xs font-bold text-white flex items-center justify-center gap-2 transition">
+                        <i class="fa-solid fa-image"></i> Ảnh bìa
+                    </button>
+                    <button onclick="sheetToggleRename()" class="py-2.5 rounded-2xl bg-white/[0.07] hover:bg-white/[0.15] border border-white/10 text-xs font-bold text-white flex items-center justify-center gap-2 transition">
+                        <i class="fa-solid fa-pen"></i> Đổi tên
+                    </button>
+                    <button onclick="sheetOpenStates()" class="py-2.5 rounded-2xl bg-white/[0.07] hover:bg-white/[0.15] border border-white/10 text-xs font-bold text-white flex items-center justify-center gap-2 transition">
+                        <i class="fa-solid fa-floppy-disk"></i> Save State
+                    </button>
+                    <button onclick="sheetToggleInfo()" class="py-2.5 rounded-2xl bg-white/[0.07] hover:bg-white/[0.15] border border-white/10 text-xs font-bold text-white flex items-center justify-center gap-2 transition">
+                        <i class="fa-solid fa-circle-info"></i> Thông tin
+                    </button>
+                </div>
+
+                <div id="sheet-rename" class="hidden flex gap-2 pt-1">
+                    <input id="sheet-rename-input" type="text" maxlength="60" onkeydown="if(event.key==='Enter') sheetSaveRename()"
+                           class="flex-1 min-w-0 bg-black/40 border border-white/20 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-white/40">
+                    <button onclick="sheetSaveRename()" class="px-3 rounded-xl bg-white text-black text-xs font-extrabold">Lưu</button>
+                </div>
+
+                <div id="sheet-info" class="hidden p-3 rounded-2xl bg-white/[0.05] border border-white/10 text-[11px] text-white/80 space-y-1 font-mono"></div>
+
+                <div class="grid grid-cols-2 gap-1.5">
+                    <button onclick="sheetExportSaves()" class="py-2.5 rounded-2xl bg-white/[0.07] hover:bg-white/[0.15] border border-white/10 text-xs font-bold text-white flex items-center justify-center gap-2 transition">
+                        <i class="fa-solid fa-file-export"></i> Xuất .sav
+                    </button>
+                    <button onclick="document.getElementById('sheet-import-input').click()" class="py-2.5 rounded-2xl bg-white/[0.07] hover:bg-white/[0.15] border border-white/10 text-xs font-bold text-white flex items-center justify-center gap-2 transition">
+                        <i class="fa-solid fa-file-import"></i> Nhập .sav
+                    </button>
+                </div>
+                <input id="sheet-import-input" type="file" class="hidden" onchange="handleSheetImportFile(event)">
+                <button id="sheet-delete-btn" onclick="sheetDelete()" class="w-full py-2.5 rounded-2xl bg-red-500/15 hover:bg-red-500/25 border border-red-400/25 text-xs font-bold text-red-300 flex items-center justify-center gap-2 transition">
+                    <i class="fa-solid fa-trash-can"></i> <span>Xóa khỏi kệ (kèm save &amp; cheat)</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== MODAL ĐỔI ẢNH ĐẠI DIỆN BĂNG GAME (CÓ AUTO BOX ART) ==================== -->
+    <div id="cover-art-modal" class="fixed inset-0 bg-black/40 backdrop-blur-md z-50 hidden items-center justify-center p-3 sm:p-6">
+        <div class="w-full max-w-md bg-black/[0.75] backdrop-blur-xl border border-white/[0.15] rounded-3xl p-5 sm:p-6 shadow-2xl max-h-[92vh] flex flex-col">
+            <div class="flex items-center justify-between pb-3 border-b border-white/20">
+                <div>
+                    <h3 class="text-base sm:text-lg font-extrabold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-image text-white/[0.85]"></i> Ảnh Đại Diện Băng Game
+                    </h3>
+                    <p id="cover-modal-rom-title" class="text-xs text-white/60 truncate max-w-[280px]">--</p>
+                </div>
+                <button onclick="closeCoverArtModal()" class="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.15] flex items-center justify-center text-white/90">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="my-4 flex flex-col sm:flex-row items-center gap-4 bg-white/[0.06] p-3.5 rounded-2xl border border-white/20">
+                <div class="w-28 h-28 rounded-2xl bg-black/[0.35] border border-white/10 overflow-hidden flex items-center justify-center shrink-0">
+                    <img id="cover-modal-preview" src="" alt="Preview" class="w-full h-full object-cover">
+                </div>
+                <div class="flex-1 w-full space-y-2">
+                    <button id="auto-boxart-btn" onclick="triggerManualAutoBoxArt()" class="w-full py-2.5 px-3.5 rounded-xl bg-white hover:bg-white/90 text-xs font-extrabold text-black shadow flex items-center justify-center gap-2 transition">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Tự Động Tìm Ảnh Bìa
+                    </button>
+                    <button onclick="triggerCustomCoverUpload()" class="w-full py-2.5 px-3.5 rounded-xl accent-gradient text-xs font-extrabold text-white shadow flex items-center justify-center gap-2 transition">
+                        <i class="fa-solid fa-upload"></i> Tải Ảnh Từ Thiết Bị Lên
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== MODAL MENU DELTA CHÍNH ==================== -->
+    <div id="delta-menu-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 hidden items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="w-full max-w-md max-h-[92dvh] overflow-y-auto bg-black/[0.65] backdrop-blur-xl border-t sm:border border-white/25 rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl">
+            <div class="w-12 h-1.5 bg-white/10 rounded-full mx-auto mb-3 sm:hidden"></div>
+
+            <div class="flex items-center justify-between pb-3 border-b border-white/[0.15]">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-2xl bg-white/10 border border-white/30 flex items-center justify-center font-black text-xl text-white shadow">Δ</div>
+                    <div>
+                        <h3 class="font-extrabold text-base text-white">Delta Control Center</h3>
+                        <p id="menu-rom-name" class="text-xs text-white/60 truncate max-w-[220px]">Chưa có ROM đang chạy</p>
+                    </div>
+                </div>
+                <button onclick="resumeGame()" class="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="grid grid-cols-3 gap-2 my-3.5">
+                <button onclick="closeDeltaMenuToModal(); openSaveStateModal();" class="col-span-2 flex flex-col items-center justify-center p-3 rounded-2xl bg-white/[0.06] hover:bg-white/[0.15] border border-white/25 transition text-center min-w-0">
+                    <i class="fa-solid fa-floppy-disk text-lg text-white/90 mb-1"></i>
+                    <span class="text-xs font-bold text-white whitespace-nowrap">Save / Load</span>
+                    <span class="text-[10px] text-white/60 whitespace-nowrap">Trạng thái</span>
+                </button>
+                <button onclick="closeDeltaMenuToModal(); openCheatModal();" class="flex flex-col items-center justify-center p-3 rounded-2xl bg-white/[0.06] hover:bg-white/[0.15] border border-white/25 transition text-center min-w-0">
+                    <i class="fa-solid fa-code text-lg text-white/90 mb-1"></i>
+                    <span class="text-xs font-bold text-white whitespace-nowrap">Cheat</span>
+                    <span class="text-[10px] text-white/60 whitespace-nowrap truncate w-full" id="menu-cheat-text">Mã cheat</span>
+                </button>
+                <div class="col-span-3 rounded-2xl bg-white/[0.06] border border-white/25 p-2.5">
+                    <div class="flex items-center justify-between mb-2 px-1">
+                        <span class="text-xs font-bold text-white"><i class="fa-solid fa-gauge-high mr-1.5 text-white/90"></i>Tốc độ</span>
+                        <span class="text-[11px] font-bold text-white/70">Đang chạy: <span id="menu-ff-text">1x</span></span>
+                    </div>
+                    <div class="grid grid-cols-4 gap-1.5">
+                        <button type="button" data-ff="1" onclick="setFastForwardSpeed(1)" class="ff-opt">1x</button>
+                        <button type="button" data-ff="2" onclick="setFastForwardSpeed(2)" class="ff-opt">2x</button>
+                        <button type="button" data-ff="3" onclick="setFastForwardSpeed(3)" class="ff-opt">3x</button>
+                        <button type="button" data-ff="4" onclick="setFastForwardSpeed(4)" class="ff-opt">4x</button>
+                    </div>
+                </div>
+                <button onclick="closeDeltaMenu(); toggleHoldSelectionMode(); resumeGame();" class="flex flex-col items-center justify-center p-3 rounded-2xl bg-white/[0.06] hover:bg-white/[0.15] border border-white/25 transition text-center min-w-0">
+                    <i class="fa-solid fa-thumbtack text-lg text-white/90 mb-1"></i>
+                    <span class="text-xs font-bold text-white whitespace-nowrap">Giữ nút</span>
+                    <span class="text-[10px] text-white/60 whitespace-nowrap">Auto Hold</span>
+                </button>
+                <button onclick="closeDeltaMenuToModal(); openControllerModal();" class="flex flex-col items-center justify-center p-3 rounded-2xl bg-white/[0.06] hover:bg-white/[0.15] border border-white/25 transition text-center min-w-0">
+                    <i class="fa-solid fa-gamepad text-lg text-white/90 mb-1"></i>
+                    <span class="text-xs font-bold text-white whitespace-nowrap">Tay cầm</span>
+                    <span class="text-[10px] text-white/60 whitespace-nowrap">Bluetooth/USB</span>
+                </button>
+                <button onclick="toggleMute();" class="flex flex-col items-center justify-center p-3 rounded-2xl bg-white/[0.06] hover:bg-white/[0.15] border border-white/25 transition text-center min-w-0">
+                    <i id="menu-audio-icon" class="fa-solid fa-volume-high text-lg text-white/90 mb-1"></i>
+                    <span class="text-xs font-bold text-white whitespace-nowrap">Âm thanh</span>
+                    <span class="text-[10px] text-white/60 whitespace-nowrap" id="menu-audio-text">Bật</span>
+                </button>
+                <button onclick="cycleScreenFilter(this)" class="flex flex-col items-center justify-center p-3 rounded-2xl bg-white/[0.06] hover:bg-white/[0.15] border border-white/25 transition text-center min-w-0">
+                    <i class="fa-solid fa-tv text-lg text-white/90 mb-1"></i>
+                    <span class="text-xs font-bold text-white whitespace-nowrap">Màn hình</span>
+                    <span class="text-[10px] text-white/60 whitespace-nowrap truncate w-full" id="menu-filter-text">Pixel Tỉ Lệ</span>
+                </button>
+                <button onclick="closeDeltaMenu(); enterTouchLayoutEditMode('player');" class="flex flex-col items-center justify-center p-3 rounded-2xl bg-white/[0.06] hover:bg-white/[0.15] border border-white/25 transition text-center min-w-0">
+                    <i class="fa-solid fa-arrows-up-down-left-right text-lg text-white/90 mb-1"></i>
+                    <span class="text-xs font-bold text-white whitespace-nowrap">Chỉnh nút</span>
+                    <span class="text-[10px] text-white/60 whitespace-nowrap">Vị trí ảo</span>
+                </button>
+                <button onclick="toggleTouchControlsVisibility()" class="flex flex-col items-center justify-center p-3 rounded-2xl bg-white/[0.06] hover:bg-white/[0.15] border border-white/25 transition text-center min-w-0">
+                    <i id="menu-touch-icon" class="fa-solid fa-mobile-screen-button text-lg text-white/90 mb-1"></i>
+                    <span class="text-xs font-bold text-white whitespace-nowrap">Nút ảo</span>
+                    <span class="text-[10px] text-white/60 whitespace-nowrap" id="menu-touch-text">Bật</span>
+                </button>
+            </div>
+
+            <!-- Thanh 3 nút hệ thống mỏng gọn 1 dòng -->
+            <div class="flex flex-col gap-2 pt-2 border-t border-white/10">
+                <div class="flex items-center gap-1.5">
+                    <button onclick="restartCurrentRom()" class="flex-1 py-2 px-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.15] text-[11px] font-bold text-white border border-white/20 transition flex items-center justify-center gap-1.5 whitespace-nowrap min-w-0">
+                        <i class="fa-solid fa-rotate text-[11px] opacity-80 shrink-0"></i>
+                        <span class="truncate">Khởi động lại</span>
+                    </button>
+                    <button onclick="closeDeltaMenu(); switchToLibraryView();" class="flex-1 py-2 px-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.15] text-[11px] font-bold text-white border border-white/20 transition flex items-center justify-center gap-1.5 whitespace-nowrap min-w-0">
+                        <i class="fa-solid fa-box-archive text-[11px] opacity-80 shrink-0"></i>
+                        <span class="truncate">Kệ băng</span>
+                    </button>
+                </div>
+                <button onclick="resumeGame()" class="w-full py-2.5 rounded-2xl bg-white/20 hover:bg-white/30 border border-white/30 text-xs sm:text-sm font-extrabold text-white shadow-lg transition active:scale-[0.98]">
+                    Quay Lại Trò Chơi
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== TRANG CÀI ĐẶT ==================== -->
+    <div id="settings-modal" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 hidden items-center justify-center p-3 sm:p-6" onclick="if(event.target===this) closeSettingsModal()">
+        <div class="w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-3xl bg-[#121212] border border-white/10 shadow-2xl p-5">
+            <div class="flex items-center justify-between mb-5">
+                <h2 class="text-xl font-extrabold text-white">Cài đặt</h2>
+                <button onclick="closeSettingsModal()" aria-label="Đóng" class="w-9 h-9 rounded-full bg-white/[0.08] hover:bg-white/[0.16] flex items-center justify-center text-white/90">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <h3 class="text-base font-extrabold text-white mb-2 px-1">Âm thanh</h3>
+            <div class="set-group mb-4">
+                <label class="set-row cursor-pointer">
+                    <i class="fa-solid fa-volume-high set-ico"></i>
+                    <span class="set-label whitespace-nowrap">Bật âm thanh</span>
+                    <span class="set-switch"><input id="set-audio-toggle" type="checkbox" onchange="settingsToggleAudio(this.checked)"><span></span></span>
+                </label>
+            </div>
+
+            <h3 class="text-base font-extrabold text-white mb-2 px-1">Hiển thị</h3>
+            <div class="set-group mb-4">
+                <label class="set-row cursor-pointer">
+                    <i class="fa-solid fa-tv set-ico"></i>
+                    <span class="set-label whitespace-nowrap">Lưới LCD (kiểu màn cũ)</span>
+                    <span class="set-switch"><input id="set-lcd-grid-toggle" type="checkbox" onchange="settingsToggleLcdGrid(this.checked)"><span></span></span>
+                </label>
+            </div>
+
+            <h3 class="text-base font-extrabold text-white mb-2 px-1">Điều khiển</h3>
+            <div class="set-group mb-6">
+                <label class="set-row cursor-pointer">
+                    <i class="fa-solid fa-hand-pointer set-ico"></i>
+                    <span class="set-label">Ẩn nút ảo</span>
+                    <span class="set-switch"><input id="set-hide-controls-toggle" type="checkbox" onchange="settingsToggleHideControls()"><span></span></span>
+                </label>
+                <label class="set-row cursor-pointer">
+                    <i class="fa-solid fa-mobile-screen-button set-ico"></i>
+                    <span class="set-label">Rung khi nhấn nút</span>
+                    <span class="set-switch"><input id="set-haptic-toggle" type="checkbox" onchange="settingsToggleHaptic(this.checked)"><span></span></span>
+                </label>
+                <button class="set-row" onclick="settingsOpenTouchCustomization()">
+                    <i class="fa-solid fa-arrows-up-down-left-right set-ico"></i>
+                    <span class="set-label">Tùy chỉnh vị trí &amp; kích thước nút ảo</span>
+                    <i class="fa-solid fa-chevron-right set-chev"></i>
+                </button>
+                <button class="set-row" onclick="settingsOpenKeyboard()">
+                    <i class="fa-regular fa-keyboard set-ico"></i>
+                    <span class="set-label">Bàn phím &amp; tay cầm</span>
+                    <i class="fa-solid fa-chevron-right set-chev"></i>
+                </button>
+            </div>
+
+            <h3 class="text-base font-extrabold text-white mb-2 px-1">Dữ liệu</h3>
+            <div class="set-group">
+                <button class="set-row !text-red-400" onclick="closeSettingsModal(); confirmClearAllGames();">
+                    <i class="fa-solid fa-trash-can set-ico !text-red-400"></i>
+                    <span class="set-label font-bold">Xóa hết game (kèm Save State, Cheat &amp; .sav)</span>
+                    <i class="fa-solid fa-chevron-right set-chev"></i>
+                </button>
+            </div>
+            <p class="text-sm text-white/50 mt-3 px-1 leading-relaxed">Tay cầm ngoài sẽ tự nhận khi cắm USB hoặc kết nối Bluetooth. Bố cục nút ảo được lưu tách biệt cho màn hình Dọc và màn hình Ngang.</p>
+        </div>
+    </div>
+
+    <!-- ==================== MODAL QUẢN LÝ SAVE STATES & LOAD STATES ==================== -->
+    <div id="savestate-modal" class="fixed inset-0 bg-black/40 backdrop-blur-md z-50 hidden items-center justify-center p-3 sm:p-6">
+        <div class="w-full max-w-2xl bg-black/[0.65] backdrop-blur-xl border border-white/[0.15] rounded-3xl p-5 sm:p-6 shadow-2xl max-h-[90vh] flex flex-col">
+            <div class="flex items-center justify-between pb-3 border-b border-white/20">
+                <div>
+                    <h3 class="text-lg font-extrabold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-bookmark text-white/[0.85]"></i> Quản Lý Save States
+                    </h3>
+                    <p id="savestate-subtitle" class="text-xs text-white/60">Lưu và khôi phục tức thì vị trí đang chơi (Tự động sao lưu mỗi 1 phút vào Auto Backup)</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="exportSavForRom(AppState.currentRom.id)" class="px-3 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.15] border border-white/20 text-xs font-semibold text-white/90" title="Tải save trong game (.sav) về máy">
+                        <i class="fa-solid fa-file-arrow-down mr-1"></i> Xuất .sav
+                    </button>
+                    <button onclick="document.getElementById('state-file-input').click()" class="px-3 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.15] border border-white/20 text-xs font-semibold text-white/90" title="Nhập file .sav của game">
+                        <i class="fa-solid fa-file-arrow-up mr-1"></i> Nhập .sav
+                    </button>
+                    <button onclick="closeSaveStateModal()" class="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.15] flex items-center justify-center text-white/90">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div id="savestate-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-3 my-4 overflow-y-auto pr-1"></div>
+        </div>
+    </div>
+
+    <!-- ==================== MODAL QUẢN LÝ MÃ GIAN LẬN (CHEAT CODES) ==================== -->
+    <div id="cheat-modal" class="fixed inset-0 bg-black/40 backdrop-blur-md z-50 hidden items-center justify-center p-3 sm:p-6">
+        <div class="w-full max-w-xl bg-black/[0.65] backdrop-blur-xl border border-white/[0.15] rounded-3xl p-5 sm:p-6 shadow-2xl max-h-[90vh] flex flex-col">
+            <div class="flex items-center justify-between pb-3 border-b border-white/20">
+                <div>
+                    <h3 class="text-lg font-extrabold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-wand-magic-sparkles text-white/[0.85]"></i> Cheat Codes (GameShark / Action Replay / CodeBreaker)
+                    </h3>
+                    <p class="text-xs text-white/60">Áp dụng trực tiếp vào bộ nhớ mGBA (<code class="text-white/[0.85]">XXXXXXXX YYYYYYYY</code> hoặc <code class="text-white/[0.85]">XXXXXXXX YYYY</code>)</p>
+                </div>
+                <button onclick="closeCheatModal()" class="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.15] flex items-center justify-center text-white/90">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="bg-white/[0.06] border border-white/20 rounded-2xl p-3.5 my-3 space-y-2.5">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <input id="cheat-name-input" type="text" placeholder="Tên mã (VD: Bất tử máu, Rare Candy)" class="sm:col-span-2 bg-black/[0.35] border border-white/20 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-white/40">
+                    <select id="cheat-type-select" class="bg-black/[0.35] border border-white/20 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none focus:border-white/40">
+                        <option value="GameShark">GameShark v3</option>
+                        <option value="ActionReplay">Action Replay</option>
+                        <option value="CodeBreaker">CodeBreaker / Raw</option>
+                    </select>
+                </div>
+                <textarea id="cheat-code-input" rows="2" placeholder="Nhập mã HEX (VD: 82025840 0044) — Mỗi dòng 1 mã" class="w-full bg-black/[0.35] border border-white/20 rounded-xl px-3 py-2 text-xs font-mono text-white/[0.85] focus:outline-none focus:border-white/40 uppercase"></textarea>
+                <div class="flex items-center justify-between">
+                    <button onclick="fillSampleCheatFormat()" class="text-[11px] text-white/[0.85] hover:underline">
+                        + Điền mẫu thử nghiệm hợp lệ
+                    </button>
+                    <button onclick="addNewCheat()" class="px-4 py-1.5 rounded-xl bg-white hover:bg-white/90 text-xs font-extrabold text-black shadow transition">
+                        <i class="fa-solid fa-plus mr-1"></i> Thêm &amp; Bật Cheat
+                    </button>
+                </div>
+            </div>
+
+            <div id="cheat-list-container" class="flex-1 overflow-y-auto space-y-2 pr-1 min-h-[140px]"></div>
+        </div>
+    </div>
+
+    <!-- ==================== MODAL KẾT NỐI TAY CẦM & GÁN PHÍM ==================== -->
+    <div id="controller-modal" class="fixed inset-0 bg-black/40 backdrop-blur-md z-50 hidden items-center justify-center p-3 sm:p-6">
+        <div class="w-full max-w-2xl bg-black/[0.65] backdrop-blur-xl border border-white/[0.15] rounded-3xl p-5 sm:p-6 shadow-2xl max-h-[90vh] flex flex-col">
+            <div class="flex items-center justify-between pb-3 border-b border-white/20">
+                <div>
+                    <h3 class="text-lg font-extrabold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-gamepad text-white/[0.85]"></i> Kết Nối Tay Cầm &amp; Tùy Chỉnh Phím
+                    </h3>
+                    <p class="text-xs text-white/60">Hỗ trợ tay cầm Xbox, PlayStation, Switch Pro, 8BitDo qua Bluetooth/USB</p>
+                </div>
+                <button onclick="closeControllerModal()" class="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.15] flex items-center justify-center text-white/90">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="my-3 p-3.5 rounded-2xl bg-black/[0.35] border border-white/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                <div class="flex items-center gap-3">
+                    <div id="modal-gamepad-badge" class="w-10 h-10 rounded-2xl bg-white/[0.06] flex items-center justify-center text-white/60">
+                        <i class="fa-solid fa-plug text-lg"></i>
+                    </div>
+                    <div>
+                        <p id="modal-gamepad-name" class="text-xs sm:text-sm font-bold text-white">Chưa phát hiện tay cầm ngoài</p>
+                        <p id="modal-gamepad-live-input" class="text-[11px] font-mono text-white/[0.85]">Hãy cắm USB hoặc kết nối Bluetooth rồi bấm 1 nút bất kỳ trên tay cầm</p>
+                    </div>
+                </div>
+                <button onclick="testGamepadRumble()" class="px-3 py-1.5 rounded-xl bg-white/[0.1] hover:bg-white/[0.15] border border-white/20 text-white/[0.85] text-xs font-bold">
+                    Test Rung (Rumble)
+                </button>
+            </div>
+
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold text-white/90">Bấm vào ô bất kỳ để gán lại phím Bàn phím hoặc Tay cầm:</span>
+                <button onclick="resetDefaultMappings()" class="text-xs text-white/[0.85] hover:underline">Khôi phục mặc định</button>
+            </div>
+
+            <div id="remapping-list" class="grid grid-cols-1 sm:grid-cols-2 gap-2 overflow-y-auto pr-1 flex-1"></div>
+        </div>
+    </div>
+
+    <!-- Phần tử phụ trợ Haptic iOS & Badge Gỡ lỗi FPS (?debug=1) -->
+    <input type="checkbox" id="ios-haptic-toggle" switch style="position:fixed;opacity:0;pointer-events:none;left:-9999px;top:-9999px;" aria-hidden="true">
+    <label id="ios-haptic-label" for="ios-haptic-toggle" style="position:fixed;opacity:0;pointer-events:none;left:-9999px;top:-9999px;" aria-hidden="true"></label>
+    <div id="hud-debug-fps" class="hidden fixed bottom-3 left-3 z-[60] px-2.5 py-1 rounded-lg bg-black/85 border border-white/25 text-[11px] font-mono text-green-400 shadow-xl pointer-events-none">Khung giả lập/giây: 0</div>
+
+    <!-- ==================== THÔNG BÁO TOAST ==================== -->
+    <div id="toast-container" class="fixed top-14 left-1/2 -translate-x-1/2 z-[60] flex flex-col items-center gap-2 pointer-events-none"></div>
+
+    <!-- ==================== TOÀN BỘ LOGIC JAVASCRIPT ==================== -->
+    <script src="js/core.js"></script>
+    <script src="js/library-ui.js"></script>
+    <script src="js/input.js"></script>
+    <script src="js/saves-cheats.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

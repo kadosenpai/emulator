@@ -1,0 +1,273 @@
+* {
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+}
+input, textarea {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+:root {
+    --accent-glow: rgba(255, 255, 255, 0.05);
+    --touch-opacity: 1;
+}
+
+html, body, button, input, select, textarea, .font-mono, code, pre, kbd, samp {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+}
+.font-mono, code, pre, kbd, samp { font-variant-numeric: tabular-nums; }
+
+body {
+    background-color: #0a0b10 !important;
+    background-image:
+        radial-gradient(circle at 18% 8%, rgba(255, 255, 255, 0.10) 0%, transparent 42%),
+        radial-gradient(circle at 85% 95%, rgba(255, 255, 255, 0.06) 0%, transparent 45%) !important;
+    min-height: 100dvh;
+    overflow-x: hidden;
+}
+
+.accent-gradient {
+    background: rgba(255, 255, 255, 0.14) !important;
+    border: 1.5px solid rgba(255, 255, 255, 0.35) !important;
+}
+.accent-gradient:hover { background: rgba(255, 255, 255, 0.22) !important; }
+
+.gba-theater-stage {
+    aspect-ratio: 3 / 2;
+    width: var(--gba-stage-w, min(100vw, calc(100dvh * 1.5)));
+    max-height: 100dvh;
+    background-color: #040507;
+    position: relative;
+    overflow: hidden;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+@media (orientation: portrait) {
+    .gba-theater-stage {
+        width: 100vw;
+        max-width: 540px;
+        max-height: 48dvh;
+    }
+}
+
+@media (orientation: landscape) {
+    .gba-theater-stage {
+        height: 100dvh;
+        width: min(100vw, calc(100dvh * 1.5));
+    }
+}
+
+.gba-theater-stage canvas {
+    width: 100% !important;
+    height: 100% !important;
+    display: block;
+    object-fit: contain;
+}
+
+.filter-pixelated canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+.filter-smooth canvas {
+    image-rendering: auto;
+}
+.filter-warm canvas {
+    image-rendering: pixelated;
+    filter: sepia(0.18) saturate(0.92) contrast(1.06) brightness(0.98);
+}
+
+/* 1a. Lưới LCD mặc định TẮT hoàn toàn để không gây hiệu ứng ô caro to */
+.lcd-grid-overlay {
+    display: none !important;
+    background-image:
+        linear-gradient(to right, rgba(0, 0, 0, 0.14) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(0, 0, 0, 0.14) 1px, transparent 1px);
+    background-size: var(--lcd-cell, 1.6px) var(--lcd-cell, 1.6px);
+    pointer-events: none;
+}
+.lcd-grid-overlay.active-lcd {
+    display: block !important;
+}
+
+.hold-active {
+    outline: 2.5px solid #ffffff !important;
+    outline-offset: 2px;
+    animation: pulseHold 1.4s infinite ease-in-out;
+}
+@keyframes pulseHold {
+    0%, 100% { box-shadow: 0 0 14px rgba(255, 255, 255, 0.85); }
+    50% { box-shadow: 0 0 24px rgba(255, 255, 255, 0.25); }
+}
+
+.game-card {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s ease, border-color 0.22s ease;
+}
+.game-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 20px 38px -12px rgba(0, 0, 0, 0.8), 0 0 24px -6px var(--accent-glow);
+    border-color: rgba(255, 255, 255, 0.32) !important;
+}
+
+input, textarea, select {
+    background: rgba(255, 255, 255, 0.06) !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    color: #fff;
+}
+select option { background: #14151c; color: #fff; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.04); }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.25); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.4); }
+
+#game-stage-area {
+    align-items: center;
+    justify-content: center;
+}
+@media (orientation: portrait) {
+    /* Căn khung hình game vào chính giữa vùng không gian phía trên cụm nút bấm ảo, không bị dính sát đỉnh trên */
+    #game-stage-area {
+        align-items: center;
+        padding-top: max(16px, env(safe-area-inset-top, 0px));
+        padding-bottom: calc(max(14px, env(safe-area-inset-bottom, 0px)) + 260px);
+    }
+}
+
+/* ===== Nút ảo & Tùy chỉnh vị trí/kích thước ===== */
+#eclipse-touch-overlay {
+    opacity: var(--touch-opacity, 1);
+}
+#eclipse-touch-overlay .ctl, #menu-fallback {
+    pointer-events: auto;
+    touch-action: none;
+}
+#eclipse-touch-overlay .ctl {
+    position: absolute;
+    transform-origin: center center;
+}
+.glass-btn {
+    background: rgba(255, 255, 255, 0.07);
+    border: 1.5px solid rgba(255, 255, 255, 0.38);
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 800;
+    touch-action: none;
+    transition: background 0.06s ease, transform 0.06s ease;
+}
+.glass-btn.active, .glass-btn:active {
+    background: rgba(255, 255, 255, 0.3);
+    transform: scale(0.94);
+}
+.btn-L, .btn-R { width: 92px; height: 42px; border-radius: 14px; top: max(14px, env(safe-area-inset-top)); }
+.btn-L { left: max(20px, env(safe-area-inset-left)); }
+.btn-R { right: max(20px, env(safe-area-inset-right)); }
+#joy-zone { width: 150px; height: 150px; left: max(24px, env(safe-area-inset-left)); bottom: max(22px, env(safe-area-inset-bottom)); }
+.joy-base { position: absolute; inset: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.05); border: 1.5px solid rgba(255, 255, 255, 0.3); display: flex; align-items: center; justify-content: center; }
+.joy-knob { width: 58px; height: 58px; border-radius: 50%; background: rgba(255, 255, 255, 0.2); border: 1.5px solid rgba(255, 255, 255, 0.5); pointer-events: none; will-change: transform; }
+.round-btn { position: absolute; width: 66px; height: 66px; border-radius: 50%; font-size: 24px; }
+/* A và B là hai nút riêng, kéo thả/đổi kích thước độc lập; B nằm sát A hơn và xa joystick hơn */
+#eclipse-touch-overlay { --ab-base: max(22px, env(safe-area-inset-bottom)); --ab-edge: max(24px, env(safe-area-inset-right)); }
+#ctl-btn-A { right: var(--ab-edge); bottom: calc(var(--ab-base) + 52px); }
+#ctl-btn-B { right: calc(var(--ab-edge) + 74px); bottom: calc(var(--ab-base) + 2px); }
+#mid-zone { left: 50%; transform: translateX(-50%); bottom: max(14px, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 12px; }
+.pill-btn { height: 34px; padding: 0 14px; border-radius: 999px; font-size: 10px; letter-spacing: 0.12em; }
+.menu-tri { width: 40px; height: 40px; border-radius: 50%; font-size: 14px; display: flex; align-items: center; justify-content: center; border-color: rgba(255, 255, 255, 0.55); }
+
+@media (orientation: portrait) {
+    #eclipse-touch-overlay { --ab-base: calc(max(14px, env(safe-area-inset-bottom)) + 56px); }
+    #joy-zone { bottom: calc(max(14px, env(safe-area-inset-bottom)) + 56px); }
+    .btn-L, .btn-R { top: auto; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 56px + 150px + 14px); }
+}
+
+body.layout-editing #eclipse-touch-overlay .ctl {
+    outline: 2px dashed rgba(255, 255, 255, 0.45);
+    outline-offset: 4px;
+    cursor: move;
+}
+body.layout-editing #eclipse-touch-overlay .ctl.ctl-selected {
+    outline: 2.5px solid #ffffff;
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.45);
+}
+
+@media (min-width: 640px), (orientation: landscape) and (max-height: 540px) {
+    #mb-title { display: none !important; }
+    #mobile-bar { display: contents !important; }
+    #mobile-resume-pill:not(.hidden) { display: inline-flex !important; }
+    #view-dashboard > main > header { position: relative; flex-wrap: nowrap !important; gap: 12px !important; justify-content: flex-start !important; }
+    #mb-left { order: 0; display: flex; align-items: center; z-index: 20; position: relative; }
+    #dash-search-cluster { order: 1; flex: 1 1 auto; width: auto !important; max-width: 460px; z-index: 10; }
+    #mb-right { order: 2; display: flex; align-items: center; margin-left: auto; z-index: 20; position: relative; }
+}
+
+.m-icon-btn {
+    pointer-events: auto !important;
+    position: relative;
+    z-index: 30 !important;
+}
+@media (orientation: landscape) and (max-height: 540px) {
+    #view-dashboard > main > header { padding: 6px 12px !important; }
+    #dash-content { padding: 12px 16px !important; }
+    #dashboard-rom-grid { grid-template-columns: repeat(5, minmax(0, 1fr)) !important; gap: 12px !important; }
+}
+
+.set-group { border-radius: 16px; background: #1c1c1e; overflow: hidden; }
+.set-row { position: relative; display: flex; align-items: center; gap: 14px; width: 100%; padding: 13px 16px; text-align: left; color: #fff; font-size: 16px; }
+.set-row + .set-row::before { content: ""; position: absolute; top: 0; left: 56px; right: 0; height: 1px; background: rgba(255,255,255,.1); }
+.set-ico { width: 24px; text-align: center; font-size: 19px; color: rgba(255,255,255,.75); }
+.set-label { flex: 1; min-width: 0; }
+.set-chev { color: rgba(255,255,255,.35); font-size: 13px; }
+.set-switch { position: relative; display: inline-block; width: 51px; height: 31px; flex-shrink: 0; }
+.set-switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; z-index: 1; }
+.set-switch span { position: absolute; inset: 0; border-radius: 999px; background: #555; transition: background .2s; }
+.set-switch span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.4); transition: transform .2s; }
+.set-switch input:checked + span { background: #fff; }
+.set-switch input:checked + span::after { background: #111; transform: translateX(20px); }
+.m-icon-btn { width: 40px; height: 40px; border-radius: 999px; color: #fff; font-size: 17px; transition: background .15s, transform .1s; }
+.m-icon-btn:hover { background: rgba(255, 255, 255, 0.12); }
+.m-icon-btn:active { transform: scale(0.92); background: rgba(255, 255, 255, 0.2); }
+.m-menu-item { width: 100%; display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 12px; font-size: 14px; font-weight: 600; color: rgba(255,255,255,.92); text-align: left; }
+.m-menu-item:hover, .m-menu-item:active { background: rgba(255,255,255,.12); }
+.m-menu-item i { width: 18px; text-align: center; color: rgba(255,255,255,.7); }
+
+/* ===== Safe-area iPhone (PWA "Thêm vào Màn hình chính", status-bar: black-translucent) =====
+   Nội dung được vẽ xuống dưới thanh trạng thái nên cần đệm phần tai thỏ/đồng hồ. */
+#view-dashboard > main > header {
+    padding-top: calc(10px + env(safe-area-inset-top, 0px)) !important;
+    padding-left: max(12px, env(safe-area-inset-left, 0px)) !important;
+    padding-right: max(12px, env(safe-area-inset-right, 0px)) !important;
+}
+@media (orientation: landscape) and (max-height: 540px) {
+    #view-dashboard > main > header {
+        padding-top: calc(6px + env(safe-area-inset-top, 0px)) !important;
+        padding-left: max(12px, env(safe-area-inset-left, 0px)) !important;
+        padding-right: max(12px, env(safe-area-inset-right, 0px)) !important;
+    }
+    #dash-content {
+        padding-left: max(16px, env(safe-area-inset-left, 0px)) !important;
+        padding-right: max(16px, env(safe-area-inset-right, 0px)) !important;
+    }
+}
+#toast-container { top: calc(env(safe-area-inset-top, 0px) + 56px) !important; }
+#view-player > .fixed.top-3 { top: calc(env(safe-area-inset-top, 0px) + 12px) !important; }
+
+
+/* ===== Nút chọn tốc độ trong menu tam giác ===== */
+.ff-opt { padding: 9px 0; border-radius: 12px; font-size: 13px; font-weight: 800; color: rgba(255,255,255,.85); background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.2); transition: background .12s, transform .08s; }
+.ff-opt:active { transform: scale(0.95); }
+.ff-opt.active { background: #fff; color: #111; border-color: #fff; }
+
+/* Dấu gạch chéo trên icon khi tính năng đang TẮT */
+i.icon-off { position: relative; display: inline-block; }
+i.icon-off::after {
+    content: ""; position: absolute; left: -3px; right: -3px; top: 50%;
+    height: 2.5px; border-radius: 2px; background: #fff;
+    box-shadow: 0 0 0 1.5px rgba(0,0,0,.75);
+    transform: translateY(-50%) rotate(-42deg); pointer-events: none;
+}
